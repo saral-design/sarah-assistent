@@ -343,44 +343,60 @@ let hotCache=null;let hotCacheDate='';
 async function fetchRealHot(){
   const today=S.today();
   if(hotCache&&hotCacheDate===today)return hotCache;
+  let weibo=[],xiaohongshu=[],tonghuashun=[],toutiao=[],kr36=[];
+  // 方案1: 从GitHub Actions更新的hot-data.json读取（同域名，无CORS问题）
   try{
-    const[wRes,xRes,tRes,kRes]=await Promise.all([
-      fetch('https://uapis.cn/api/v1/misc/hotboard?type=weibo').then(r=>r.json()).catch(()=>null),
-      fetch('https://uapis.cn/api/v1/misc/hotboard?type=xiaohongshu').then(r=>r.json()).catch(()=>null),
-      fetch('https://uapis.cn/api/v1/misc/hotboard?type=toutiao').then(r=>r.json()).catch(()=>null),
-      fetch('https://uapis.cn/api/v1/misc/hotboard?type=36kr').then(r=>r.json()).catch(()=>null)
-    ]);
-    let weibo=[],xiaohongshu=[],tonghuashun=[],toutiao=[],kr36=[];
-    if(wRes&&wRes.list&&Array.isArray(wRes.list)){weibo=wRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
-    if(xRes&&xRes.list&&Array.isArray(xRes.list)){xiaohongshu=xRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
-    if(tRes&&tRes.list&&Array.isArray(tRes.list)){toutiao=tRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
-    if(kRes&&kRes.list&&Array.isArray(kRes.list)){kr36=kRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
-    // 同花顺财经：从头条和36kr中筛选财经相关 + 财经新闻池
-    const finKeywords=['股','基金','A股','美股','港股','利率','央行','通胀','GDP','经济','金融','投资','上市','财报','涨','跌','牛市','熊市','房地产','消费','出口','进口','贸易','关税','能源','石油','黄金','比特币','数字货币','银行','保险','债券','外汇','涨幅','跌幅','板块','科技','芯片','半导体','新能源','AI','人工智能'];
-    const finFromReal=[...toutiao,...kr36].filter(h=>finKeywords.some(k=>h.title.includes(k))).slice(0,8);
-    const d=new Date();const seed=d.getFullYear()*10000+(d.getMonth()+1)*100+d.getDate();
-    const thPool=['央行公开市场逆回购操作','北向资金净流入超50亿','沪深两市成交额破万亿','新能源车销量再创新高','半导体国产替代加速','消费板块回暖','医药板块集体上涨','房地产政策迎来调整','外贸进出口数据公布','LPR利率维持不变','CPI同比涨幅回落','PPI数据好于预期','数字经济政策密集出台','REITs扩募迎来新机遇','大宗商品价格波动加剧'];
-    function pick(a,n){let res=[];let used=new Set();let s=seed;for(let i=0;i<n;i++){s=(s*9301+49297)%233280;let idx=s%a.length;while(used.has(idx)){idx=(idx+1)%a.length;}used.add(idx);res.push(a[idx]);}return res;}
-    const thPoolPicked=pick(thPool,Math.max(0,10-finFromReal.length)).map(t=>({title:t,hot:0}));
-    tonghuashun=[...finFromReal,...thPoolPicked].slice(0,10);
-    // 每日财经总结
-    let finSummary='';
-    if(tonghuashun.length){
-      const top3=tonghuashun.slice(0,3).map(h=>h.title).join('、');
-      const hasStock=tonghuashun.some(h=>h.title.includes('股')||h.title.includes('A股'));
-      const hasPolicy=tonghuashun.some(h=>h.title.includes('政策')||h.title.includes('央行'));
-      const hasTech=tonghuashun.some(h=>h.title.includes('科技')||h.title.includes('AI')||h.title.includes('芯片'));
-      finSummary=`📌 今日财经要点：${top3}。`;
-      if(hasStock)finSummary+='A股市场方面需关注资金流向和板块轮动，建议关注北向资金动态。';
-      if(hasPolicy)finSummary+='政策面上有新动向，留意央行操作及宏观政策调整对市场的影响。';
-      if(hasTech)finSummary+='科技板块持续活跃，AI和半导体赛道值得关注，但需注意短期波动风险。';
-      finSummary+='投资有风险，决策需谨慎。';
+    const cached=await fetch('hot-data.json?'+today,{signal:AbortSignal.timeout(5000)}).then(r=>r.json());
+    if(cached&&(cached.weibo||cached.xiaohongshu)){
+      weibo=(cached.weibo||[]).slice(0,10);
+      xiaohongshu=(cached.xiaohongshu||[]).slice(0,10);
+      toutiao=(cached.toutiao||[]).slice(0,10);
+      kr36=(cached['36kr']||[]).slice(0,10);
+      console.log('[hot] loaded from cache, updated:',cached._updated||'unknown');
     }
-    hotCache={weibo,xiaohongshu,tonghuashun,toutiao,kr36,finSummary};hotCacheDate=today;
-    return hotCache;
-  }catch(e){
+  }catch(e1){console.warn('[hot] cache fetch failed, trying Worker',e1.message);}
+  // 方案2: 如果缓存没有数据，尝试Worker代理
+  if(!weibo.length&&!xiaohongshu.length){
+    try{
+      const[wRes,xRes,tRes,kRes]=await Promise.all([
+        fetch(WORKER_URL+'/hot?type=weibo',{signal:AbortSignal.timeout(5000)}).then(r=>r.json()).catch(()=>null),
+        fetch(WORKER_URL+'/hot?type=xiaohongshu',{signal:AbortSignal.timeout(5000)}).then(r=>r.json()).catch(()=>null),
+        fetch(WORKER_URL+'/hot?type=toutiao',{signal:AbortSignal.timeout(5000)}).then(r=>r.json()).catch(()=>null),
+        fetch(WORKER_URL+'/hot?type=36kr',{signal:AbortSignal.timeout(5000)}).then(r=>r.json()).catch(()=>null)
+      ]);
+      if(wRes&&wRes.list&&Array.isArray(wRes.list)){weibo=wRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
+      if(xRes&&xRes.list&&Array.isArray(xRes.list)){xiaohongshu=xRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
+      if(tRes&&tRes.list&&Array.isArray(tRes.list)){toutiao=tRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
+      if(kRes&&kRes.list&&Array.isArray(kRes.list)){kr36=kRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
+    }catch(e2){console.warn('[hot] Worker fetch failed',e2.message);}
+  }
+  // 如果两种方案都没数据，用fallback
+  if(!weibo.length&&!xiaohongshu.length&&!toutiao.length){
     return getFallbackHot();
   }
+  // 同花顺财经：从头条和36kr中筛选财经相关 + 财经新闻池
+  const finKeywords=['股','基金','A股','美股','港股','利率','央行','通胀','GDP','经济','金融','投资','上市','财报','涨','跌','牛市','熊市','房地产','消费','出口','进口','贸易','关税','能源','石油','黄金','比特币','数字货币','银行','保险','债券','外汇','涨幅','跌幅','板块','科技','芯片','半导体','新能源','AI','人工智能'];
+  const finFromReal=[...toutiao,...kr36].filter(h=>finKeywords.some(k=>h.title.includes(k))).slice(0,8);
+  const d=new Date();const seed=d.getFullYear()*10000+(d.getMonth()+1)*100+d.getDate();
+  const thPool=['央行公开市场逆回购操作','北向资金净流入超50亿','沪深两市成交额破万亿','新能源车销量再创新高','半导体国产替代加速','消费板块回暖','医药板块集体上涨','房地产政策迎来调整','外贸进出口数据公布','LPR利率维持不变','CPI同比涨幅回落','PPI数据好于预期','数字经济政策密集出台','REITs扩募迎来新机遇','大宗商品价格波动加剧'];
+  function pick(a,n){let res=[];let used=new Set();let s=seed;for(let i=0;i<n;i++){s=(s*9301+49297)%233280;let idx=s%a.length;while(used.has(idx)){idx=(idx+1)%a.length;}used.add(idx);res.push(a[idx]);}return res;}
+  const thPoolPicked=pick(thPool,Math.max(0,10-finFromReal.length)).map(t=>({title:t,hot:0}));
+  tonghuashun=[...finFromReal,...thPoolPicked].slice(0,10);
+  // 每日财经总结
+  let finSummary='';
+  if(tonghuashun.length){
+    const top3=tonghuashun.slice(0,3).map(h=>h.title).join('、');
+    const hasStock=tonghuashun.some(h=>h.title.includes('股')||h.title.includes('A股'));
+    const hasPolicy=tonghuashun.some(h=>h.title.includes('政策')||h.title.includes('央行'));
+    const hasTech=tonghuashun.some(h=>h.title.includes('科技')||h.title.includes('AI')||h.title.includes('芯片'));
+    finSummary=`📌 今日财经要点：${top3}。`;
+    if(hasStock)finSummary+='A股市场方面需关注资金流向和板块轮动，建议关注北向资金动态。';
+    if(hasPolicy)finSummary+='政策面上有新动向，留意央行操作及宏观政策调整对市场的影响。';
+    if(hasTech)finSummary+='科技板块持续活跃，AI和半导体赛道值得关注，但需注意短期波动风险。';
+    finSummary+='投资有风险，决策需谨慎。';
+  }
+  hotCache={weibo,xiaohongshu,tonghuashun,toutiao,kr36,finSummary};hotCacheDate=today;
+  return hotCache;
 }
 function getFallbackHot(){
   const d=new Date();const seed=d.getFullYear()*10000+(d.getMonth()+1)*100+d.getDate();
