@@ -624,8 +624,7 @@ async function loadAlmanacWeather(){
   const today=S.today();
   // 黄历
   try{
-    if(WORKER_URL==='https://SARA_WORKER_URL'){const alEl=document.getElementById('almanacCard');if(alEl)alEl.innerHTML='<div class="info-card-title">📅 黄历</div><span style="font-size:11px;color:var(--text-light);">未配置Cloudflare Worker</span>';}
-    else{const alRes=await fetch(WORKER_URL+'/almanac?sun='+today).then(r=>r.json());
+    const alRes=await fetch(WORKER_URL+'/almanac?sun='+today,{signal:AbortSignal.timeout(8000)}).then(r=>r.json());
     if(alRes&&alRes.code===1&&alRes.data){
       const d=alRes.data;
       const lunarEl=document.getElementById('clockLunar');
@@ -639,12 +638,13 @@ async function loadAlmanacWeather(){
         const jie=d.GJie||d.LJie||'';
         alEl.innerHTML=`<div class="info-card-title">📅 黄历${jie?' · '+jie:''}</div><div style="margin-bottom:3px;"><span class="info-card-yi">宜</span> ${esc(yi)}</div><div><span class="info-card-ji">忌</span> ${esc(ji)}</div>`;
       }
+    }else{
+      throw new Error('almanac data invalid');
     }
-    }
-  }catch(e){console.error('[almanac] error',e);const alEl=document.getElementById('almanacCard');if(alEl)alEl.innerHTML='<div class="info-card-title">📅 黄历</div>暂不可用';}
+  }catch(e){console.error('[almanac] error',e);const alEl=document.getElementById('almanacCard');if(alEl)alEl.innerHTML='<div class="info-card-title">📅 黄历</div>暂不可用';const lunarEl=document.getElementById('clockLunar');if(lunarEl)lunarEl.textContent='农历暂不可用';}
   // 天气（获取用户实时定位）
   function fetchWeather(lat,lon,label){
-    fetch('https://api.open-meteo.com/v1/forecast?latitude='+lat+'&longitude='+lon+'&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m').then(r=>r.json()).then(wRes=>{
+    fetch('https://api.open-meteo.com/v1/forecast?latitude='+lat+'&longitude='+lon+'&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m',{signal:AbortSignal.timeout(8000)}).then(r=>r.json()).then(wRes=>{
       if(wRes&&wRes.current){
         const c=wRes.current;const temp=Math.round(c.temperature_2m);const hum=c.relative_humidity_2m;const wind=c.wind_speed_10m;
         const wcode=c.weather_code;
@@ -672,7 +672,7 @@ async function loadAlmanacWeather(){
     },err=>{
       console.warn('[geolocation] denied or error, fallback to London',err);
       fetchWeather(51.5074,-0.1278,'伦敦天气');
-    },{enableHighAccuracy:false,timeout:10000,maximumAge:600000});
+    },{enableHighAccuracy:false,timeout:5000,maximumAge:600000});
   }else{
     fetchWeather(51.5074,-0.1278,'伦敦天气');
   }
