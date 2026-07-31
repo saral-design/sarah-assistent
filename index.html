@@ -641,27 +641,40 @@ async function loadAlmanacWeather(){
       throw new Error('lunar data not found for '+today);
     }
   }catch(e){console.error('[lunar] error',e);const lunarEl=document.getElementById('clockLunar');if(lunarEl)lunarEl.textContent='农历暂不可用';const alEl=document.getElementById('almanacCard');if(alEl)alEl.innerHTML='<div class="info-card-title">📅 黄历</div>暂不可用';}
-  // 天气（获取用户实时定位）
+  // 天气 - 优先用wttr.in（国内可访问），备用open-meteo
   function fetchWeather(lat,lon,label){
-    fetch('https://api.open-meteo.com/v1/forecast?latitude='+lat+'&longitude='+lon+'&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m',{signal:AbortSignal.timeout(8000)}).then(r=>r.json()).then(wRes=>{
-      if(wRes&&wRes.current){
-        const c=wRes.current;const temp=Math.round(c.temperature_2m);const hum=c.relative_humidity_2m;const wind=c.wind_speed_10m;
-        const wcode=c.weather_code;
-        const wMap={0:'☀️ 晴',1:'🌤️ 多云',2:'⛅ 阴',3:'☁️ 阴',45:'🌫️ 雾',48:'🌫️ 冻雾',51:'🌦️ 小雨',53:'🌦️ 小雨',55:'🌧️ 中雨',61:'🌧️ 雨',63:'🌧️ 中雨',65:'⛈️ 大雨',71:'🌨️ 小雪',73:'🌨️ 中雪',75:'❄️ 大雪',80:'🌧️ 阵雨',81:'🌧️ 阵雨',82:'⛈️ 大阵雨',95:'⛈️ 雷雨',96:'⛈️ 雷雨',99:'⛈️ 大雷雨'};
-        const wDesc=wMap[wcode]||'🌡️ '+wcode;
-        const wEl=document.getElementById('weatherCard');
-        if(wEl)wEl.innerHTML=`<div class="info-card-title">🌤️ ${label||'天气'}</div><div style="font-size:14px;font-weight:700;color:var(--text-primary);">${temp}°C ${wDesc}</div><div style="margin-top:2px;">湿度 ${hum}% · 风速 ${Math.round(wind)}km/h</div>`;
-      }
-    }).catch(e=>{console.error('[weather] error',e);const wEl=document.getElementById('weatherCard');if(wEl)wEl.innerHTML='<div class="info-card-title">🌤️ 天气</div>暂不可用';});
+    const wEl=document.getElementById('weatherCard');
+    // 方案1: wttr.in (支持CORS，国内可访问)
+    fetch('https://wttr.in/'+lat+','+lon+'?format=j1',{signal:AbortSignal.timeout(6000)}).then(r=>r.json()).then(w=>{
+      const cc=w.current_condition[0];
+      const temp=cc.temp_C;
+      const hum=cc.humidity;
+      const wind=cc.windspeedKmph;
+      const code=cc.weatherCode;
+      const wMap={'113':'☀️ 晴','116':'⛅ 多云','119':'☁️ 阴','122':'☁️ 阴','143':'🌫️ 雾','176':'🌦️ 小雨','179':'🌨️ 小雪','182':'🌧️ 雨夹雪','185':'🌧️ 雨夹雪','200':'⛈️ 雷雨','227':'🌨️ 小雪','230':'❄️ 大雪','248':'🌫️ 雾','260':'🌫️ 冻雾','263':'🌦️ 小雨','266':'🌦️ 小雨','281':'🌧️ 冻雨','284':'🌧️ 冻雨','293':'🌦️ 小雨','296':'🌦️ 小雨','299':'🌧️ 中雨','302':'🌧️ 中雨','305':'🌧️ 大雨','308':'🌧️ 大雨','311':'🌧️ 冻雨','314':'🌧️ 冻雨','317':'🌨️ 雨夹雪','320':'🌨️ 雨夹雪','323':'🌨️ 小雪','326':'🌨️ 小雪','329':'❄️ 中雪','332':'❄️ 中雪','335':'❄️ 大雪','338':'❄️ 大雪','350':'🌧️ 冻雨','353':'🌦️ 阵雨','356':'🌧️ 阵雨','359':'⛈️ 大阵雨','362':'🌨️ 阵雪','365':'❄️ 阵雪','368':'🌨️ 小雪','371':'❄️ 大雪','374':'🌧️ 冻雨','377':'🌨️ 雨夹雪','386':'⛈️ 雷雨','389':'⛈️ 雷雨','392':'⛈️ 雷雪','395':'❄️ 大雪'};
+      const wDesc=wMap[code]||'🌡️ '+code;
+      if(wEl)wEl.innerHTML=`<div class="info-card-title">🌤️ ${label||'天气'}</div><div style="font-size:14px;font-weight:700;color:var(--text-primary);">${temp}°C ${wDesc}</div><div style="margin-top:2px;">湿度 ${hum}% · 风速 ${wind}km/h</div>`;
+    }).catch(()=>{
+      // 方案2: open-meteo备用
+      fetch('https://api.open-meteo.com/v1/forecast?latitude='+lat+'&longitude='+lon+'&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m',{signal:AbortSignal.timeout(6000)}).then(r=>r.json()).then(wRes=>{
+        if(wRes&&wRes.current){
+          const c=wRes.current;const temp=Math.round(c.temperature_2m);const hum=c.relative_humidity_2m;const wind=c.wind_speed_10m;
+          const wcode=c.weather_code;
+          const wMap2={0:'☀️ 晴',1:'🌤️ 多云',2:'⛅ 阴',3:'☁️ 阴',45:'🌫️ 雾',48:'🌫️ 冻雾',51:'🌦️ 小雨',53:'🌦️ 小雨',55:'🌧️ 中雨',61:'🌧️ 雨',63:'🌧️ 中雨',65:'⛈️ 大雨',71:'🌨️ 小雪',73:'🌨️ 中雪',75:'❄️ 大雪',80:'🌧️ 阵雨',81:'🌧️ 阵雨',82:'⛈️ 大阵雨',95:'⛈️ 雷雨',96:'⛈️ 雷雨',99:'⛈️ 大雷雨'};
+          const wDesc2=wMap2[wcode]||'🌡️ '+wcode;
+          if(wEl)wEl.innerHTML=`<div class="info-card-title">🌤️ ${label||'天气'}</div><div style="font-size:14px;font-weight:700;color:var(--text-primary);">${temp}°C ${wDesc2}</div><div style="margin-top:2px;">湿度 ${hum}% · 风速 ${Math.round(wind)}km/h</div>`;
+        }
+      }).catch(e=>{console.error('[weather] error',e);if(wEl)wEl.innerHTML='<div class="info-card-title">🌤️ 天气</div>暂不可用';});
+    });
   }
   // 反向地理编码：用坐标获取城市名
   function fetchWeatherWithCity(lat,lon){
-    fetch('https://api.bigdatacloud.net/data/reverse-geocode-client?latitude='+lat+'&lon='+lon).then(r=>r.json()).then(geo=>{
+    fetch('https://api.bigdatacloud.net/data/reverse-geocode-client?latitude='+lat+'&lon='+lon,{signal:AbortSignal.timeout(5000)}).then(r=>r.json()).then(geo=>{
       let cityName='';
       if(geo&&geo.city){cityName=geo.city;}
       else if(geo&&geo.locality){cityName=geo.locality;}
       else if(geo&&geo.principalSubdivision){cityName=geo.principalSubdivision;}
-      if(!cityName)cityName='当前位置 ('+lat.toFixed(2)+','+lon.toFixed(2)+')';
+      if(!cityName)cityName='当前位置';
       fetchWeather(lat,lon,cityName+'天气');
     }).catch(()=>{fetchWeather(lat,lon,'当前位置天气');});
   }
