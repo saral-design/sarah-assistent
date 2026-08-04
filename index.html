@@ -335,35 +335,35 @@ function fmtDate(d){return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(
 
 // ========== 真实热搜抓取 ==========
 let hotCache=null;let hotCacheDate='';
-async function fetchRealHot(){
+async function fetchRealHot(force){
   const today=S.today();
-  if(hotCache&&hotCacheDate===today)return hotCache;
+  if(!force&&hotCache&&hotCacheDate===today)return hotCache;
   let weibo=[],xiaohongshu=[],tonghuashun=[],toutiao=[],kr36=[];
-  // 方案1: 从GitHub Actions更新的hot-data.json读取（同域名，无CORS问题）
+  // 方案1: Worker代理获取实时数据（优先）
   try{
-    const cached=await fetch('hot-data.json?'+today,{signal:AbortSignal.timeout(5000)}).then(r=>r.json());
-    if(cached&&(cached.weibo||cached.xiaohongshu)){
-      weibo=(cached.weibo||[]).slice(0,10);
-      xiaohongshu=(cached.xiaohongshu||[]).slice(0,10);
-      toutiao=(cached.toutiao||[]).slice(0,10);
-      kr36=(cached['36kr']||[]).slice(0,10);
-      console.log('[hot] loaded from cache, updated:',cached._updated||'unknown');
-    }
-  }catch(e1){console.warn('[hot] cache fetch failed, trying Worker',e1.message);}
-  // 方案2: 如果缓存没有数据，尝试Worker代理
+    const[wRes,xRes,tRes,kRes]=await Promise.all([
+      fetch(WORKER_URL+'/hot?type=weibo',{signal:AbortSignal.timeout(6000)}).then(r=>r.json()).catch(()=>null),
+      fetch(WORKER_URL+'/hot?type=xiaohongshu',{signal:AbortSignal.timeout(6000)}).then(r=>r.json()).catch(()=>null),
+      fetch(WORKER_URL+'/hot?type=toutiao',{signal:AbortSignal.timeout(6000)}).then(r=>r.json()).catch(()=>null),
+      fetch(WORKER_URL+'/hot?type=36kr',{signal:AbortSignal.timeout(6000)}).then(r=>r.json()).catch(()=>null)
+    ]);
+    if(wRes&&wRes.list&&Array.isArray(wRes.list)){weibo=wRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
+    if(xRes&&xRes.list&&Array.isArray(xRes.list)){xiaohongshu=xRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
+    if(tRes&&tRes.list&&Array.isArray(tRes.list)){toutiao=tRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
+    if(kRes&&kRes.list&&Array.isArray(kRes.list)){kr36=kRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
+  }catch(e1){console.warn('[hot] Worker fetch failed, trying cache',e1.message);}
+  // 方案2: 如果Worker没数据，从hot-data.json缓存读取
   if(!weibo.length&&!xiaohongshu.length){
     try{
-      const[wRes,xRes,tRes,kRes]=await Promise.all([
-        fetch(WORKER_URL+'/hot?type=weibo',{signal:AbortSignal.timeout(5000)}).then(r=>r.json()).catch(()=>null),
-        fetch(WORKER_URL+'/hot?type=xiaohongshu',{signal:AbortSignal.timeout(5000)}).then(r=>r.json()).catch(()=>null),
-        fetch(WORKER_URL+'/hot?type=toutiao',{signal:AbortSignal.timeout(5000)}).then(r=>r.json()).catch(()=>null),
-        fetch(WORKER_URL+'/hot?type=36kr',{signal:AbortSignal.timeout(5000)}).then(r=>r.json()).catch(()=>null)
-      ]);
-      if(wRes&&wRes.list&&Array.isArray(wRes.list)){weibo=wRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
-      if(xRes&&xRes.list&&Array.isArray(xRes.list)){xiaohongshu=xRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
-      if(tRes&&tRes.list&&Array.isArray(tRes.list)){toutiao=tRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
-      if(kRes&&kRes.list&&Array.isArray(kRes.list)){kr36=kRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
-    }catch(e2){console.warn('[hot] Worker fetch failed',e2.message);}
+      const cached=await fetch('hot-data.json?'+today,{signal:AbortSignal.timeout(5000)}).then(r=>r.json());
+      if(cached&&(cached.weibo||cached.xiaohongshu)){
+        weibo=(cached.weibo||[]).slice(0,10);
+        xiaohongshu=(cached.xiaohongshu||[]).slice(0,10);
+        toutiao=(cached.toutiao||[]).slice(0,10);
+        kr36=(cached['36kr']||[]).slice(0,10);
+        console.log('[hot] loaded from cache, updated:',cached._updated||'unknown');
+      }
+    }catch(e2){console.warn('[hot] cache fetch failed',e2.message);}
   }
   // 如果两种方案都没数据，用fallback
   if(!weibo.length&&!xiaohongshu.length&&!toutiao.length){
@@ -1091,12 +1091,15 @@ function ensureMapStyle(){const s=document.getElementById('map-glow-style');if(s
 // ========== 热点追踪（实时热搜+财经总结） ==========
 function pgNews(){const records=S.get('news_records',[]);const mode=S.get('news_mode','daily');let display=records;if(mode==='daily'){const today=S.today();display=records.filter(r=>r.date===today);}
 return`<div class="page-title"><span class="page-title-icon">🔥</span>热点追踪</div><div class="page-subtitle">实时热搜追踪 + 财经梳理 🌍</div>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><span id="hotUpdateTime" style="font-size:11px;color:var(--text-light);"></span><button class="btn btn-soft" id="hotRefreshBtn" onclick="refreshHot()" style="font-size:12px;padding:6px 14px;">🔄 刷新热搜</button></div>
 <div id="hotContainer"><div class="hot-loading">⏳ 正在获取今日实时热搜数据...</div></div>
 <div style="font-size:14px;font-weight:600;margin:16px 0 12px;">📋 我的关注记录</div>
 <div class="section-toolbar"><div class="toolbar-left"><div class="mode-toggle"><button class="mode-btn ${mode==='accumulate'?'active':''}" onclick="S.set('news_mode','accumulate');renderPage('news')">累积</button><button class="mode-btn ${mode==='daily'?'active':''}" onclick="S.set('news_mode','daily');renderPage('news')">今日</button></div></div><button class="btn btn-primary" onclick="toggleForm('newsForm')">➕ 记录关注</button></div>
 <div class="add-form" id="newsForm"><div class="form-group"><label class="form-label">标题</label><input type="text" class="form-input" id="newsTitle" placeholder="新闻标题"></div><div class="form-group"><label class="form-label">来源</label><input type="text" class="form-input" id="newsSrc" placeholder="BBC / 微博"></div><div class="form-group"><label class="form-label">分类</label><select class="form-select" id="newsCat"><option value="国际">🌍 国际</option><option value="英国">🇬🇧 英国</option><option value="国内">🇨🇳 国内</option><option value="科技">🔬 科技</option><option value="财经">📊 财经</option><option value="教育">🎓 教育</option><option value="其他">📦 其他</option></select></div><div class="form-group"><label class="form-label">摘要/看法</label><textarea class="form-textarea" id="newsSum" placeholder="自己的思考..."></textarea></div><div class="form-actions"><button class="btn btn-soft" onclick="toggleForm('newsForm')">取消</button><button class="btn btn-primary" onclick="addNews()">保存</button></div></div>
 <div class="item-grid">${!display.length?'<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">记下你关注的新闻～</div></div>':display.slice().reverse().map(r=>`<div class="item-card news-card"><div class="item-card-header"><div class="item-title">${esc(r.title)}</div><button class="item-delete" onclick="deleteItem('news_records','${r.id}')">🗑️</button></div>${r.source?`<div class="news-source">来源：${esc(r.source)}</div>`:''}${r.summary?`<div class="item-content" style="margin-top:4px;">${esc(r.summary)}</div>`:''}<div class="item-meta"><span class="item-tag" style="background:var(--accent-blue-light);color:#5A7090">📋 ${esc(r.category)}</span><span>${r.date||''}</span></div></div>`).join('')}</div>`;}
-async function loadRealHot(){const hot=await fetchRealHot();const container=document.getElementById('hotContainer');if(!container)return;
+async function loadRealHot(hot){
+  if(!hot)hot=await fetchRealHot();
+  const container=document.getElementById('hotContainer');if(!container)return;
   let html='<div class="hot-section">';
   // 小红书
   html+=`<div class="hot-platform"><div class="hot-platform-title">📕 小红书热榜</div><div class="hot-list">${hot.xiaohongshu.map((h,i)=>`<div class="hot-item"><span class="hot-rank">${i+1}</span><span class="hot-text">${esc(h.title)}</span></div>`).join('')}</div></div>`;
@@ -1109,7 +1112,19 @@ async function loadRealHot(){const hot=await fetchRealHot();const container=docu
     html+=`<div class="hot-summary" style="border-left:4px solid var(--accent-brown);"><div style="font-size:13px;font-weight:600;margin-bottom:6px;">📊 每日财经梳理</div><div style="font-size:12px;color:var(--text-secondary);line-height:1.7;">${esc(hot.finSummary)}</div></div>`;
   }
   html+='</div>';
-  container.innerHTML=html;}
+  container.innerHTML=html;
+  // 显示更新时间
+  const tEl=document.getElementById('hotUpdateTime');
+  if(tEl)tEl.textContent='更新于 '+S.now();
+}
+async function refreshHot(){
+  const btn=document.getElementById('hotRefreshBtn');
+  if(btn){btn.textContent='⏳ 刷新中...';btn.disabled=true;}
+  hotCache=null;
+  const hot=await fetchRealHot(true);
+  loadRealHot(hot);
+  if(btn){btn.textContent='🔄 刷新热搜';btn.disabled=false;}
+}
 function addNews(){const t=document.getElementById('newsTitle').value.trim();const sr=document.getElementById('newsSrc').value.trim();const c=document.getElementById('newsCat').value;const sm=document.getElementById('newsSum').value.trim();if(!t){showToast('记一下标题～');return;}const r=S.get('news_records',[]);r.push({id:genId(),title:t,source:sr,category:c,summary:sm,date:S.today(),time:S.now()});S.set('news_records',r);showToast('已记录 📋');renderPage('news');}
 
 // ========== 心情日记 ==========
