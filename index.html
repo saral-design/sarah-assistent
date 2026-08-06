@@ -339,33 +339,34 @@ async function fetchRealHot(force){
   const today=S.today();
   if(!force&&hotCache&&hotCacheDate===today)return hotCache;
   let weibo=[],xiaohongshu=[],tonghuashun=[],toutiao=[],kr36=[];
-  // 方案1: Worker代理获取实时数据（优先）
+  // 方案1（优先）: 从hot-data.json缓存读取（最快，GitHub Actions定时更新）
   try{
-    const[wRes,xRes,tRes,kRes]=await Promise.all([
-      fetch(WORKER_URL+'/hot?type=weibo',{signal:AbortSignal.timeout(6000)}).then(r=>r.json()).catch(()=>null),
-      fetch(WORKER_URL+'/hot?type=xiaohongshu',{signal:AbortSignal.timeout(6000)}).then(r=>r.json()).catch(()=>null),
-      fetch(WORKER_URL+'/hot?type=toutiao',{signal:AbortSignal.timeout(6000)}).then(r=>r.json()).catch(()=>null),
-      fetch(WORKER_URL+'/hot?type=36kr',{signal:AbortSignal.timeout(6000)}).then(r=>r.json()).catch(()=>null)
-    ]);
-    if(wRes&&wRes.list&&Array.isArray(wRes.list)){weibo=wRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
-    if(xRes&&xRes.list&&Array.isArray(xRes.list)){xiaohongshu=xRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
-    if(tRes&&tRes.list&&Array.isArray(tRes.list)){toutiao=tRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
-    if(kRes&&kRes.list&&Array.isArray(kRes.list)){kr36=kRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
-  }catch(e1){console.warn('[hot] Worker fetch failed, trying cache',e1.message);}
-  // 方案2: 如果Worker没数据，从hot-data.json缓存读取
+    const ts=Date.now();
+    const cached=await fetch('hot-data.json?_='+ts,{signal:AbortSignal.timeout(5000)}).then(r=>r.json());
+    if(cached&&(cached.weibo||cached.xiaohongshu)){
+      weibo=(cached.weibo||[]).slice(0,10);
+      xiaohongshu=(cached.xiaohongshu||[]).slice(0,10);
+      toutiao=(cached.toutiao||[]).slice(0,10);
+      kr36=(cached['36kr']||[]).slice(0,10);
+      hotCacheTime=cached._updated||'';
+      console.log('[hot] loaded from cache, updated:',cached._updated||'unknown');
+    }
+  }catch(e2){console.warn('[hot] cache fetch failed',e2.message);}
+  // 方案2（补充）: 如果缓存没数据，尝试Worker代理获取实时数据
   if(!weibo.length&&!xiaohongshu.length){
     try{
-      const ts=Date.now();
-      const cached=await fetch('hot-data.json?_='+ts,{signal:AbortSignal.timeout(5000)}).then(r=>r.json());
-      if(cached&&(cached.weibo||cached.xiaohongshu)){
-        weibo=(cached.weibo||[]).slice(0,10);
-        xiaohongshu=(cached.xiaohongshu||[]).slice(0,10);
-        toutiao=(cached.toutiao||[]).slice(0,10);
-        kr36=(cached['36kr']||[]).slice(0,10);
-        hotCacheTime=cached._updated||'';
-        console.log('[hot] loaded from cache, updated:',cached._updated||'unknown');
-      }
-    }catch(e2){console.warn('[hot] cache fetch failed',e2.message);}
+      const[wRes,xRes,tRes,kRes]=await Promise.all([
+        fetch(WORKER_URL+'/hot?type=weibo',{signal:AbortSignal.timeout(6000)}).then(r=>r.json()).catch(()=>null),
+        fetch(WORKER_URL+'/hot?type=xiaohongshu',{signal:AbortSignal.timeout(6000)}).then(r=>r.json()).catch(()=>null),
+        fetch(WORKER_URL+'/hot?type=toutiao',{signal:AbortSignal.timeout(6000)}).then(r=>r.json()).catch(()=>null),
+        fetch(WORKER_URL+'/hot?type=36kr',{signal:AbortSignal.timeout(6000)}).then(r=>r.json()).catch(()=>null)
+      ]);
+      if(wRes&&wRes.list&&Array.isArray(wRes.list)){weibo=wRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
+      if(xRes&&xRes.list&&Array.isArray(xRes.list)){xiaohongshu=xRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
+      if(tRes&&tRes.list&&Array.isArray(tRes.list)){toutiao=tRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
+      if(kRes&&kRes.list&&Array.isArray(kRes.list)){kr36=kRes.list.slice(0,10).map(i=>({title:i.title||'',hot:i.hot_value||0}));}
+      if(weibo.length)hotCacheTime='实时数据 '+S.now();
+    }catch(e1){console.warn('[hot] Worker fetch failed',e1.message);}
   }
   // 如果两种方案都没数据，用fallback
   if(!weibo.length&&!xiaohongshu.length&&!toutiao.length){
