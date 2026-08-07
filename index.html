@@ -314,7 +314,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue"
 <script>
 const S={prefix:'sara_',get(k,d=[]){try{let v=localStorage.getItem(this.prefix+k);return v?JSON.parse(v):d;}catch(e){return d;}},set(k,v){localStorage.setItem(this.prefix+k,JSON.stringify(v));autoBackup();syncToServer();},today(){let d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;},now(){let d=new Date();return`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;}};
 function autoBackup(){try{const all={};SYNC_KEYS.forEach(k=>{const v=localStorage.getItem(S.prefix+k);if(v)all[k]=JSON.parse(v);});const ts=new Date().toISOString().slice(0,16).replace(/[-T:]/g,'');localStorage.setItem('sara_backup_'+ts,JSON.stringify(all));const keys=Object.keys(localStorage).filter(k=>k.startsWith('sara_backup_')).sort();while(keys.length>10){localStorage.removeItem(keys.shift());keys.pop();}}catch(e){console.warn('[backup] failed',e);}}
-const SYNC_KEYS=['todos','en_content','en_expression','lang_week','lang_tasks','lang_tutorial','exercise_records','ex_checkins','food_meals','finance_records','finance_mode','finance_currency','travel_records','news_records','news_mode','review_records','review_mode','quoteIndex','quoteDate','mood_diary'];
+const SYNC_KEYS=['todos','en_content','en_expression','lang_week','lang_tasks','lang_tutorial','lang_weeks','exercise_records','ex_checkins','food_meals','finance_records','finance_mode','finance_currency','travel_records','news_records','news_mode','review_records','review_mode','quoteIndex','quoteDate','mood_diary'];
 let syncTimer=null;
 function syncToServer(){}
 const WORKER_URL='https://sara-almanac.mt-liu637.workers.dev';
@@ -436,7 +436,7 @@ function pgHome(){
   const todos=S.get('todos',[]);const todayTodos=todos.filter(r=>r.date===today);const doneCount=todayTodos.filter(r=>r.done).length;
   // 英语
   const enContentToday=S.get('en_content',[]).filter(r=>r.date===today);const enExprToday=S.get('en_expression',[]).filter(r=>r.date===today);const enExprTotal=S.get('en_expression',[]).length;
-  const langWeek=S.get('lang_week',7);const langTasks=S.get('lang_tasks',[]);const langDone=langTasks.filter(r=>r.done).length;const langTutorial=S.get('lang_tutorial','');
+  const langWeek=S.get('lang_week',7);const _langWd=getLangWeekData(langWeek);const langTasks=_langWd.tasks;const langDone=langTasks.filter(r=>r.done).length;const langTutorial=_langWd.tutorial;
   // 运动
   const exRec=S.get('exercise_records',[]);const exTodayRec=exRec.filter(r=>r.date===today);const exTodayMin=exTodayRec.reduce((s,r)=>s+(parseInt(r.duration)||0),0);const exChecked=S.get('ex_checkins',{})[today];
   const d=new Date();const weekStart=new Date(d);weekStart.setDate(d.getDate()-d.getDay());const ws=fmtDate(weekStart);const exWeekMin=exRec.filter(r=>r.date>=ws&&r.date<=today).reduce((s,r)=>s+(parseInt(r.duration)||0),0);
@@ -564,7 +564,7 @@ function switchHomeReview(type,el){
 function renderWeeklyHome(){
   const d=new Date();const today=S.today();const weekStart=new Date(d);weekStart.setDate(d.getDate()-d.getDay());const ws=fmtDate(weekStart);
   const todos=S.get('todos',[]);const weekTodos=todos.filter(r=>r.date>=ws&&r.date<=today);const weekDone=weekTodos.filter(r=>r.done).length;
-  const langWeek=S.get('lang_week',7);const langTasks=S.get('lang_tasks',[]);const langDone=langTasks.filter(r=>r.done).length;
+  const langWeek=S.get('lang_week',7);const langTasks=getLangWeekData(langWeek).tasks;const langDone=langTasks.filter(r=>r.done).length;
   const exRec=S.get('exercise_records',[]);const exWeekMin=exRec.filter(r=>r.date>=ws&&r.date<=today).reduce((s,r)=>s+(parseInt(r.duration)||0),0);const weekCheckins=Object.keys(S.get('ex_checkins',{})).filter(k=>k>=ws&&k<=today&&S.get('ex_checkins',{})[k]).length;
   const weekExNames=exRec.filter(r=>r.date>=ws&&r.date<=today).map(r=>r.name);
   const finRecords=S.get('finance_records',[]);const finWeekExp=finRecords.filter(r=>r.date>=ws&&r.date<=today&&r.type==='expense').reduce((s,r)=>s+parseFloat(r.amount||0),0);const finWeekInc=finRecords.filter(r=>r.date>=ws&&r.date<=today&&r.type==='income').reduce((s,r)=>s+parseFloat(r.amount||0),0);
@@ -614,7 +614,7 @@ function renderMonthlyHome(){
   const monthMoodCounts={};monthMoodKeys.forEach(k=>{const m=moodDiary[k].mood;monthMoodCounts[m]=(monthMoodCounts[m]||0)+1;});
   const monthMoodTop=Object.keys(monthMoodCounts).sort((a,b)=>monthMoodCounts[b]-monthMoodCounts[a]);
   // 英语学习自动总结
-  const langTasks=S.get('lang_tasks',[]);const langDone=langTasks.filter(r=>r.done).length;
+  const langTasks=getLangWeekData(S.get('lang_week',7)).tasks;const langDone=langTasks.filter(r=>r.done).length;
   const monthEnSummary=monthEnContent?`学习 <strong>${monthEnContent}</strong> 项：${monthEnContentArr.slice(0,4).map(r=>esc(r.content)).join('、')}`:`本月暂无学习记录`;
   const monthExprSummary=monthEnExpr?`积累 <strong>${monthEnExpr}</strong> 个表达：${monthEnExprArr.slice(0,4).map(r=>esc(r.en)).join('、')}`:`本月暂未积累新表达`;
   const langSummary=`语言班 Week ${S.get('lang_week',7)} · 任务 ${langDone}/${langTasks.length}`;
@@ -709,12 +709,28 @@ async function loadAlmanacWeather(){
 }
 
 // ========== 英语学习 ==========
+// 按周存取：lang_weeks = { 7: {tasks:[...], tutorial:"..."}, 8: {tasks:[], tutorial:""} }
+function getLangWeekData(week){
+  const all=S.get('lang_weeks',{});
+  // 迁移旧数据：如果lang_weeks没有但lang_tasks/lang_tutorial有，迁移到week7
+  if(Object.keys(all).length===0){
+    const oldTasks=S.get('lang_tasks',[]);
+    const oldTut=S.get('lang_tutorial','');
+    if(oldTasks.length||oldTut){all[7]={tasks:oldTasks,tutorial:oldTut};S.set('lang_weeks',all);}
+  }
+  if(!all[week]){all[week]={tasks:[],tutorial:''};S.set('lang_weeks',all);}
+  return all[week];
+}
+function setLangWeekData(week,data){
+  const all=S.get('lang_weeks',{});
+  all[week]=data;S.set('lang_weeks',all);
+}
 function pgEnglish(){const today=S.today();const content=S.get('en_content',[]).filter(r=>r.date===today);const expression=S.get('en_expression',[]).filter(r=>r.date===today);const d=new Date();const seed=d.getFullYear()*10000+(d.getMonth()+1)*100+d.getDate();const tip=REVIEW_TIPS[seed%REVIEW_TIPS.length];
-const langWeek=S.get('lang_week',7);const langTasks=S.get('lang_tasks',[]);const langTutorial=S.get('lang_tutorial','');
+const langWeek=S.get('lang_week',7);const wd=getLangWeekData(langWeek);const langTasks=wd.tasks;const langTutorial=wd.tutorial;
 const langDone=langTasks.filter(r=>r.done).length;
 return`<div class="page-title"><span class="page-title-icon">📚</span>英语学习</div><div class="page-subtitle">四大模块助你高效学英语 🌱</div><div class="en-modules">
 <div class="en-module-lang"><div class="en-module-title">🎓 语言班</div>
-<div class="lang-week-nav"><button onclick="S.set('lang_week',${langWeek-1});renderPage('english')">◀</button><div class="lang-week-num">Week ${langWeek}</div><button onclick="S.set('lang_week',${langWeek+1});renderPage('english')">▶</button></div>
+<div class="lang-week-nav"><button onclick="changeLangWeek(${langWeek-1})">◀</button><div class="lang-week-num">Week ${langWeek}</div><button onclick="changeLangWeek(${langWeek+1})">▶</button></div>
 <div style="font-size:14px;font-weight:600;margin-bottom:8px;">📋 本周待办清单 · ${langDone}/${langTasks.length} 完成</div>
 <div class="todo-list" style="margin-bottom:8px;">${langTasks.length?langTasks.map(r=>`<div class="todo-item ${r.done?'done':''}"><div class="todo-check" onclick="toggleLangTask('${r.id}')">${r.done?'✓':''}</div><span class="todo-text">${esc(r.content)}</span><span class="todo-del" onclick="deleteLangTask('${r.id}')">✕</span></div>`).join(''):`<div style="font-size:12px;color:var(--text-light);padding:8px;">还没有本周任务，添加一个吧～</div>`}</div>
 <div class="todo-input-row"><input type="text" class="todo-input" id="langTaskInput" placeholder="添加本周任务..." style="flex:1;"><button class="todo-add-btn" onclick="addLangTask()">添加</button></div>
@@ -728,10 +744,18 @@ return`<div class="page-title"><span class="page-title-icon">📚</span>英语�
 <div class="en-module-review"><div class="en-module-title">💡 今日复盘建议</div><div class="module-item" style="border-color:var(--accent-yellow);"><span class="mi-text">${tip}</span></div><div style="font-size:11px;color:var(--text-light);margin-top:8px;">每天自动更新 🔄</div></div></div>`;}
 function addEnContent(){const v=document.getElementById('enContentInput').value.trim();if(!v){showToast('写一下今天学了什么～');return;}const r=S.get('en_content',[]);r.push({id:genId(),content:v,date:S.today(),time:S.now()});S.set('en_content',r);showToast('已记录 📖');renderPage('english');}
 function addEnExpr(){const en=document.getElementById('enExprEn').value.trim();const cn=document.getElementById('enExprCn').value.trim();if(!en||!cn){showToast('请填写英文和中文～');return;}const r=S.get('en_expression',[]);r.push({id:genId(),en,cn,date:S.today(),time:S.now()});S.set('en_expression',r);showToast('表达已累积 💬');renderPage('english');}
-function addLangTask(){const v=document.getElementById('langTaskInput').value.trim();if(!v){showToast('写一下本周任务～');return;}const r=S.get('lang_tasks',[]);r.push({id:genId(),content:v,done:false});S.set('lang_tasks',r);showToast('任务已添加 🎓');renderPage('english');}
-function toggleLangTask(id){const r=S.get('lang_tasks',[]);const t=r.find(x=>x.id===id);if(t)t.done=!t.done;S.set('lang_tasks',r);renderPage('english');}
-function deleteLangTask(id){showConfirm('确定要删除这条任务吗？',()=>{S.set('lang_tasks',S.get('lang_tasks',[]).filter(x=>x.id!==id));showToast('已删除 🗑️');renderPage('english');});}
-function saveLangTutorial(){const v=document.getElementById('langTutorialInput').value.trim();S.set('lang_tutorial',v);showToast('Tutorial已保存 📝');renderPage('english');}
+function changeLangWeek(newWeek){
+  if(newWeek<1)return;
+  const oldWeek=S.get('lang_week',7);
+  S.set('lang_week',newWeek);
+  // 如果新周还没有数据，自动初始化空数据
+  getLangWeekData(newWeek);
+  renderPage('english');
+}
+function addLangTask(){const v=document.getElementById('langTaskInput').value.trim();if(!v){showToast('写一下本周任务～');return;}const wk=S.get('lang_week',7);const wd=getLangWeekData(wk);wd.tasks.push({id:genId(),content:v,done:false});setLangWeekData(wk,wd);showToast('任务已添加 🎓');renderPage('english');}
+function toggleLangTask(id){const wk=S.get('lang_week',7);const wd=getLangWeekData(wk);const t=wd.tasks.find(x=>x.id===id);if(t)t.done=!t.done;setLangWeekData(wk,wd);renderPage('english');}
+function deleteLangTask(id){showConfirm('确定要删除这条任务吗？',()=>{const wk=S.get('lang_week',7);const wd=getLangWeekData(wk);wd.tasks=wd.tasks.filter(x=>x.id!==id);setLangWeekData(wk,wd);showToast('已删除 🗑️');renderPage('english');});}
+function saveLangTutorial(){const v=document.getElementById('langTutorialInput').value.trim();const wk=S.get('lang_week',7);const wd=getLangWeekData(wk);wd.tutorial=v;setLangWeekData(wk,wd);showToast('Tutorial已保存 📝');renderPage('english');}
 
 // ========== 锻炼身体 ==========
 function pgExercise(){const today=S.today();const d=new Date();const records=S.get('exercise_records',[]);const todayRec=records.filter(r=>r.date===today);const todayMin=todayRec.reduce((s,r)=>s+(parseInt(r.duration)||0),0);const weekStart=new Date(d);weekStart.setDate(d.getDate()-d.getDay());const ws=fmtDate(weekStart);const weekMin=records.filter(r=>r.date>=ws&&r.date<=today).reduce((s,r)=>s+(parseInt(r.duration)||0),0);const ms=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;const monthMin=records.filter(r=>r.date.startsWith(ms)).reduce((s,r)=>s+(parseInt(r.duration)||0),0);const exCheckins=S.get('ex_checkins',{});const calCheckData={};Object.keys(exCheckins).forEach(k=>{if(exCheckins[k])calCheckData[k]=true;});
@@ -1213,7 +1237,7 @@ function pgExport(){
   const todosCount=S.get('todos',[]).length;
   const enContentCount=S.get('en_content',[]).length;
   const enExprCount=S.get('en_expression',[]).length;
-  const langTasksCount=S.get('lang_tasks',[]).length;
+  const langTasksCount=getLangWeekData(S.get('lang_week',7)).tasks.length;
   const exRecCount=S.get('exercise_records',[]).length;
   const foodDays=Object.keys(S.get('food_meals',{})).length;
   const finCount=S.get('finance_records',[]).length;
